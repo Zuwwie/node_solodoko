@@ -1,5 +1,5 @@
-const ApiError = require("../../errors/ApiError");
-const User = require("../../data/User");
+const ApiError = require('../../errors/ApiError');
+const User = require('../../data/User');
 
 module.exports = {
     getAllUsers: async () => {
@@ -12,12 +12,12 @@ module.exports = {
         const user = await User.findById(userId);
 
         if (!user) {
-            throw new ApiError("User not found", 404);
+            throw new ApiError('User not found', 404);
         }
         return user;
     },
     createUser: async (userObject) => {
         const user = await User.create(userObject);
-        return user
+        return user;
     }
-}
+};

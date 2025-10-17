@@ -1,6 +1,6 @@
-const ApiError = require("../../errors/ApiError");
+const ApiError = require('../../errors/ApiError');
 
-const {getSingleUserById} = require("./user.services");
+const {getSingleUserById} = require('./user.services');
 
 module.exports = {
     checkIsUserExists: async (req, res, next) => {
@@ -8,15 +8,14 @@ module.exports = {
             const user = await getSingleUserById(req.params.id);
 
             if (!user) {
-                console.log(333)
                 throw new ApiError('User not found', 404);
             }
 
             req.user = user;
-            next()
+            next();
         } catch (e) {
             next(e);
         }
     }
-}
+};
 

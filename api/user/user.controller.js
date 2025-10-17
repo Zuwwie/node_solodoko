@@ -1,13 +1,11 @@
-const userService = require("./user.controller");
-const userServices = require('./user.services');
-const {createUser, getSingleUserById, getAllUsers} = require("./user.services");
+// const userServices = require('./user.services');
+const {createUser, getAllUsers} = require('./user.services');
 
 module.exports = {
     getAllUsers: async (req, res, next) => {
         try {
             const users = await getAllUsers();
 
-            console.log(users);
             res.json(users);
         } catch (e) {
             next(e);
@@ -18,7 +16,7 @@ module.exports = {
         try {
             const {user} = req;
 
-            res.json('Welcome id is User ' + user.name);
+            await res.json('Welcome id is User ' + user.name);
         } catch (e) {
             next(e);
         }
@@ -29,7 +27,6 @@ module.exports = {
 
             const createdUser = await createUser(req.body);
 
-            console.log(createdUser);
             res.json('Welcome new user ' + createdUser.name);
 
         } catch (e) {
@@ -37,4 +34,4 @@ module.exports = {
         }
 
     }
-}
+};

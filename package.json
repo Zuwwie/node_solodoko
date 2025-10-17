@@ -17,6 +17,8 @@
   },
   "devDependencies": {
     "@types/mongoose": "^5.11.97",
-    "nodemon": "^3.1.10"
+    "globals": "^16.4.0",
+    "nodemon": "^3.1.10",
+    "eslint": "^8.57.1"
   }
 }
