@@ -1,10 +1,12 @@
 const express = require('express');
 const mongoose = require('mongoose');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({path: path.join(__dirname, 'env', `.env.local`)});
 const {say} = require('cowsay');
 
 const {PORT, MONGO_URL} = require('./configs/variables');
 const mainRouter = require("./api/api.router");
+const ApiError = require("./errors/ApiError");
 
 const app = express();
 
@@ -28,7 +30,7 @@ app.listen(PORT, () => {
 
 
 function _notFoundError(req, res, next) {
-    res.status(404).json('Not Found');
+    next(new ApiError("Route Not Found", 404));
 }
 
 function _mainErrorHandler(err, req, res, next) {
