@@ -1,4 +1,4 @@
-const e = require("express");
+const ApiError = require("../../errors/ApiError");
 
 const {getSingleUserById} = require("./user.services");
 
@@ -8,7 +8,8 @@ module.exports = {
             const user = await getSingleUserById(req.params.id);
 
             if (!user) {
-                throw new Error('User not found');
+                console.log(333)
+                throw new ApiError('User not found', 404);
             }
 
             req.user = user;

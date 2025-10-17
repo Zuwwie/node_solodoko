@@ -1,5 +1,5 @@
+const ApiError = require("../../errors/ApiError");
 const User = require("../../data/User");
-const {getAllUsers} = require("./user.controller");
 
 module.exports = {
     getAllUsers: async () => {
@@ -11,10 +11,8 @@ module.exports = {
     getSingleUserById: async (userId) => {
         const user = await User.findById(userId);
 
-        console.log(user);
-
         if (!user) {
-            throw new Error("404 User not found");
+            throw new ApiError("User not found", 404);
         }
         return user;
     },
