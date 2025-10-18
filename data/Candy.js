@@ -10,6 +10,9 @@ const CandySchema = new Schema(
         name: {type: String, trim: true, required: true, unique: true},
         category: {type: String, trim: true, required: true},
 
+        isAvailable: {type: Boolean, default: true, index: true}, // наявність
+        photoUrl: {type: String, trim: true}, //ФОТО
+
         // ціни за 1000 г (грн/кг)
         pricePerKgBuy: {type: Number, required: true, min: 0},
         pricePerKgSell: {type: Number, required: true, min: 0},
@@ -29,7 +32,7 @@ const CandySchema = new Schema(
 );
 
 // --------- CREATE/SAVE ----------
-CandySchema.pre('validate', function(next) {
+CandySchema.pre('validate', function (next) {
     // Рахуємо лише якщо є базові величини
     const w = this.weightPerPiece;
     if (w && w > 0) {
@@ -51,7 +54,7 @@ CandySchema.pre('validate', function(next) {
 });
 
 // --------- UPDATE (findOneAndUpdate / findByIdAndUpdate) ----------
-CandySchema.pre('findOneAndUpdate', async function(next) {
+CandySchema.pre('findOneAndUpdate', async function (next) {
     const update = this.getUpdate() || {};
     const $set = update.$set || {};
     // поточний документ (щоб мати старі значення якщо не передані в апдейті)
@@ -65,8 +68,12 @@ CandySchema.pre('findOneAndUpdate', async function(next) {
         const pieces = Math.max(1, Math.floor(1000 / Number(w)));
         $set.piecesPerKg = pieces;
 
-        if (buyKg !== null) {$set.pricePerPcsBuy = round2(Number(buyKg) / pieces);}
-        if (sellKg !== null) {$set.pricePerPcsSell = round2(Number(sellKg) / pieces);}
+        if (buyKg !== null) {
+            $set.pricePerPcsBuy = round2(Number(buyKg) / pieces);
+        }
+        if (sellKg !== null) {
+            $set.pricePerPcsSell = round2(Number(sellKg) / pieces);
+        }
     } else {
         $set.piecesPerKg = undefined;
         $set.pricePerPcsBuy = undefined;
