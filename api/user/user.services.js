@@ -19,5 +19,11 @@ module.exports = {
     createUser: async (userObject) => {
         const user = await User.create(userObject);
         return user;
+    },
+
+    deleteUserById: async (userId) => {
+        const user = await User.findByIdAndDelete(userId);
+
+        return user;
     }
 };
