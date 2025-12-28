@@ -6,6 +6,7 @@ const Candy = require('../data/Candy');
 
 require('dotenv').config({path: path.resolve(__dirname, '../env/.env.local')});
 
+/* -------------------- utils -------------------- */
 const isNil = (v) => v === null || v === undefined;
 const isPosNumber = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
@@ -31,39 +32,59 @@ function toNumber(v) {
     return Number.isFinite(n) ? n : undefined;
 }
 
+const toBool01 = (v) => {
+    if (typeof v === 'number') {
+        return v === 1;
+    }
+    if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        return s === '1' || s === 'true' || s === 'так';
+    }
+    return false;
+};
+
 function norm(h) {
     return String(h).toLowerCase()
         .replace(/\s+/g, ' ')
         .trim();
 }
 
+/** визначаємо ключ за назвою колонки */
 function pickKey(header) {
     const h = norm(header);
+
     if (h.startsWith('назва')) {
         return 'name';
     }
+
     if (h.includes('ціна') && (h.includes('вхід') || h.includes('вх'))) {
-        return 'pricePerKgBuy';
+        // значення буде «сирим» і далі інтерпретується залежно від isWeighted
+        return 'priceBuyRaw';
     }
     if (h.includes('ціна') && (h.includes('продаж') || h.includes('прод'))) {
-        return 'pricePerKgSell';
+        return 'priceSellRaw';
     }
+
     if (h.includes('вага') && (h.includes('1шт') || h.includes('1 шт') || h.includes('за 1'))) {
         return 'weightPerPiece';
     }
+
     if (h.startsWith('категор')) {
         return 'category';
     }
+
+    if (h.startsWith('вагов') || h.includes('weighted')) {
+        return 'isWeighted';
+    }
+
     return undefined;
 }
 
-// -------------------- CLI --------------------
+/* -------------------- CLI -------------------- */
 function parseArgs(argv) {
     const args = argv.slice(2);
     const file = args.find((a) => !a.startsWith('--')) || null;
-    const sheet =
-        (args.find((a) => a.startsWith('--sheet=')) || '')
-            .split('=')[1] || null;
+    const sheet = (args.find((a) => a.startsWith('--sheet=')) || '').split('=')[1] || null;
     const dry = args.includes('--dry');
     return {file, sheet, dry};
 }
@@ -78,18 +99,22 @@ function readRowsFromXlsx(filePath, sheetName) {
     return XLSX.utils.sheet_to_json(sheet, {raw: true});
 }
 
+/* -------------------- mapping & compute -------------------- */
 function mapRow(rawRow) {
     const mapped = {};
-    const entries = Object.entries(rawRow);
-    for (let i = 0; i < entries.length; i += 1) {
-        const k = entries[i][0];
-        const v = entries[i][1];
+    for (const [
+        k,
+        v
+    ] of Object.entries(rawRow)) {
         const key = pickKey(k);
         if (!key) {
             continue;
         }
+
         if (key === 'name' || key === 'category') {
-            mapped[key] = String(v).trim();
+            mapped[key] = String(v ?? '').trim();
+        } else if (key === 'isWeighted') {
+            mapped.isWeighted = toBool01(v);
         } else {
             mapped[key] = toNumber(v);
         }
@@ -101,73 +126,109 @@ function mapRow(rawRow) {
     if (!mapped.category) {
         return {error: 'Порожня Категорія'};
     }
+
+    // за замовчуванням вважаємо вагові (щоб не зламати старі файли без колонки)
+    if (typeof mapped.isWeighted !== 'boolean') {
+        mapped.isWeighted = true;
+    }
+
     return {data: mapped};
 }
 
-function computeDerived(mapped) {
+/**
+ * На вході:
+ *  - isWeighted=true  -> priceBuyRaw/priceSellRaw трактуємо як грн/кг
+ *  - isWeighted=false -> priceBuyRaw/priceSellRaw трактуємо як грн/шт
+ * Обчислюємо дзеркальні одиниці (грн/шт або грн/кг) при наявності weightPerPiece
+ */
+function computeFields(mapped) {
     const w = mapped.weightPerPiece;
-    const buyKg = mapped.pricePerKgBuy;
-    const sellKg = mapped.pricePerKgSell;
+    const isWeighted = !!mapped.isWeighted;
 
-    let piecesPerKg;
-    let pricePerPcsBuy;
-    let pricePerPcsSell;
-
-    if (isPosNumber(w)) {
-        piecesPerKg = Math.max(1, Math.round(1000 / w));
-        if (!isNil(buyKg)) {
-            pricePerPcsBuy = round(buyKg * w / 1000, 3);
-        }
-        if (!isNil(sellKg)) {
-            pricePerPcsSell = round(sellKg * w / 1000, 3);
-        }
-    }
-
-    const isAvailable = (!isNil(buyKg) && !isNil(sellKg) && isPosNumber(w)) === true;
-
-    return {piecesPerKg, pricePerPcsBuy, pricePerPcsSell, isAvailable};
-}
-
-function buildOp(mapped, derived) {
+    // підготовка базових set/unset
     const $set = {
         name: mapped.name,
         category: mapped.category,
-        pricePerKgBuy: mapped.pricePerKgBuy,
-        pricePerKgSell: mapped.pricePerKgSell,
-        weightPerPiece: mapped.weightPerPiece,
-        isAvailable: derived.isAvailable,
+        isWeighted,
+        weightPerPiece: isNil(w) ? undefined : w,
     };
-
-    if (!isNil(derived.piecesPerKg)) {
-        $set.piecesPerKg = derived.piecesPerKg;
-    }
-    if (!isNil(derived.pricePerPcsBuy)) {
-        $set.pricePerPcsBuy = derived.pricePerPcsBuy;
-    }
-    if (!isNil(derived.pricePerPcsSell)) {
-        $set.pricePerPcsSell = derived.pricePerPcsSell;
-    }
-
     const $unset = {};
-    if (isNil(derived.piecesPerKg)) {
+
+    // piecesPerKg
+    if (isPosNumber(w)) {
+        $set.piecesPerKg = Math.max(1, Math.round(1000 / w));
+    } else {
         $unset.piecesPerKg = '';
     }
-    if (isNil(derived.pricePerPcsBuy)) {
-        $unset.pricePerPcsBuy = '';
+
+    // головні ціни
+    if (isWeighted) {
+        const buyKg = mapped.priceBuyRaw;
+        const sellKg = mapped.priceSellRaw;
+
+        if (!isNil(buyKg)) {
+            $set.pricePerKgBuy = buyKg;
+        } else {
+            $unset.pricePerKgBuy = '';
+        }
+        if (!isNil(sellKg)) {
+            $set.pricePerKgSell = sellKg;
+        } else {
+            $unset.pricePerKgSell = '';
+        }
+
+        // ціни за шт при наявності ваги
+        if (isPosNumber(w) && !isNil(buyKg)) {
+            $set.pricePerPcsBuy = round((buyKg * w) / 1000, 3);
+        } else {
+            $unset.pricePerPcsBuy = '';
+        }
+
+        if (isPosNumber(w) && !isNil(sellKg)) {
+            $set.pricePerPcsSell = round((sellKg * w) / 1000, 3);
+        } else {
+            $unset.pricePerPcsSell = '';
+        }
+
+        $set.isAvailable = isPosNumber(buyKg) && isPosNumber(sellKg);
+    } else {
+        const buyPcs = mapped.priceBuyRaw;
+        const sellPcs = mapped.priceSellRaw;
+
+        if (!isNil(buyPcs)) {
+            $set.pricePerPcsBuy = buyPcs;
+        } else {
+            $unset.pricePerPcsBuy = '';
+        }
+        if (!isNil(sellPcs)) {
+            $set.pricePerPcsSell = sellPcs;
+        } else {
+            $unset.pricePerPcsSell = '';
+        }
+
+        // ціни за кг при наявності ваги
+        if (isPosNumber(w) && !isNil(buyPcs)) {
+            $set.pricePerKgBuy = round(buyPcs * (1000 / w), 2);
+        } else {
+            $unset.pricePerKgBuy = '';
+        }
+
+        if (isPosNumber(w) && !isNil(sellPcs)) {
+            $set.pricePerKgSell = round(sellPcs * (1000 / w), 2);
+        } else {
+            $unset.pricePerKgSell = '';
+        }
+
+        $set.isAvailable = isPosNumber(buyPcs) && isPosNumber(sellPcs);
     }
-    if (isNil(derived.pricePerPcsSell)) {
-        $unset.pricePerPcsSell = '';
+
+    // прибираємо weightPerPiece якщо її немає
+    if (isNil(w)) {
+        $unset.weightPerPiece = '';
     }
 
     const update = Object.keys($unset).length ? {$set, $unset} : {$set};
-
-    return {
-        updateOne: {
-            filter: {name: mapped.name, category: mapped.category},
-            update,
-            upsert: true,
-        },
-    };
+    return update;
 }
 
 function buildOps(rows) {
@@ -177,15 +238,22 @@ function buildOps(rows) {
     for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i];
         const {data, error} = mapRow(row);
-        const rowNum = i + 2; // +1 заголовок +1 індекс
+        const rowNum = i + 2; // +1 header, +1 index base
 
         if (error) {
             skipped.push({row: rowNum, reason: error});
             continue;
         }
 
-        const derived = computeDerived(data);
-        ops.push(buildOp(data, derived));
+        const update = computeFields(data);
+
+        ops.push({
+            updateOne: {
+                filter: {name: data.name, category: data.category},
+                update,
+                upsert: true,
+            },
+        });
     }
 
     return {ops, skipped};
@@ -193,7 +261,6 @@ function buildOps(rows) {
 
 async function runImport({file, sheet, dry}) {
     const rows = readRowsFromXlsx(file, sheet);
-
     if (!rows.length) {
         return {result: null, skipped: [], note: 'Немає рядків для імпорту.'};
     }
@@ -214,13 +281,12 @@ async function runImport({file, sheet, dry}) {
     return {result: res, skipped};
 }
 
-// -------------------- main (мінімальна складність) --------------------
+/* -------------------- main -------------------- */
 async function main() {
     const {file, sheet, dry} = parseArgs(process.argv);
     if (!file) {
         throw new Error('Використання: node scripts/import-candies-kg.js ./data.xlsx [--sheet=Лист1] [--dry]');
     }
-
 
     const uri = process.env.MONGODB_URI || process.env.MONGO_URL;
     if (!uri) {
@@ -235,6 +301,7 @@ async function main() {
     if (note) {
         console.log(note);
     }
+
     if (result) {
         const stats = result.dry
             ? {inserted: 0, modified: 0, matched: 0, skipped: skipped.length, dry: true}
